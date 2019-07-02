@@ -14,8 +14,6 @@ patat:
 
 ---
 
-# Who I am and what I want
-
 # Friendly introduction
 
 - Hello. My name is Daniel J. Harvey.
@@ -49,11 +47,11 @@ patat:
 - How datatypes change over time and what we can do to not lose our minds
   completely coping with this.
 
-# Disclaimer
+# Context
 
 - My background is in making web applications of some sort or another
 
-- Therefore my perspective is completely based on this
+- Therefore my perspectives are entirely biased to these use-cases
 
 - Forgive me Padre, etc.
 
@@ -63,9 +61,7 @@ We had server side applications.
 
 * If the code agrees with the DB schema...
 
-* Great!
-
-* (if we have types too, then just wow really) 
+* *Great!*
 
 # Then came Javascript
 
@@ -73,9 +69,7 @@ We had server side applications.
 
 * And things didn't necessarily agree with one another 
 
-* There was sometimes JQuery.
-
-* At some point, our applications had a Front End. 
+* There was sometimes *JQuery*.
 
 # The Traditional Backend / Frontend Monolith
 
@@ -95,8 +89,6 @@ monolithic things.
 - Forget about the past
 
 - *YOLO*
-
-- etc
 
 # So...
 
@@ -145,7 +137,9 @@ just can't stop delivering business value.
 
 - *How will this unnamed company cope with communicating with any number of historical deployments?*
 
-# We are now tied forever to our past
+# So basically...
+
+* We are now tied forever to our past
 
 * Business requirements, changing over time...
 
@@ -159,9 +153,8 @@ just can't stop delivering business value.
 
 # Whoa
 
-- ...and that solution also had types
-
-# Concrete examples
+- ...let's also stipulate that we would like said solution to be statically
+  typed
 
 # Our first data type
 
@@ -301,10 +294,8 @@ data NewUser
     , newPet       :: OldPet
     , newAge       :: Int
     }
-    deriving stock (Eq, Ord, Show, Generic, JSON.FromJSON, JSON.ToJSON)
+    deriving (Eq, Ord, Show, Generic, JSON.FromJSON, JSON.ToJSON)
 ```
-
-- Good job.
 
 # HOLD ON THOUGH
 
@@ -489,8 +480,8 @@ class Versioned (label :: Symbol) (num :: Nat) where
   type num `VersionOf` label :: Type
 ```
 
-- This `VersionOf` type here is an `associated type synonym` that works a bit
-  like a functional dependency
+- This `VersionOf` type here is an `associated type family` - a type level
+  function that is scoped to only work inside the typeclass it is defined in.
 
 - It defines a function we can use to find a datatype from the `label` and the
   `num`.
@@ -541,7 +532,37 @@ instance Migratable "User" 2 where
 
 # What does all that buy us then?
 
-- In short, this function:
+- Firstly, this more exciting version of our `migrate` function
+```haskell
+migrate 
+  :: earliest `VersionOf` label 
+  -> Maybe (target `VersionOf` label)
+```
+
+- Which we can pass `versions` and a `label` to convert and old datatype to a
+  new one.
+```haskell
+oldToNew :: OldUser -> Maybe NewUser
+oldToNew = migrate @1 @2 @"User"
+```  
+
+- This one only does one conversion - but we can use the same code to do as
+  many versions as we like.
+```haskell
+veryOldToVeryNew :: OldUser -> Maybe VeryNewUser
+veryOldToVeryNew = migrate @1 @100 @"User"
+```  
+
+# What about that JSON we talked about earlier?
+
+- We also get this function:
+```haskell
+parseJSONVia
+  :: JSON 
+  -> Maybe (target `VersionOf` label)
+```
+
+- Which works like this:
 ```haskell
 parseSomeKindOfUser 
   :: JSON 
@@ -556,30 +577,65 @@ thing = parse a
     <|> parse b >>= migrate
 ```
 
-- What are those @ symbols?
+# What are those @ symbols?
 
-Type applications - this means we are telling the `parseJSONVia` function we
-want to use the label `User`, start at version `1`, and go up to version `2`.
+- Type applications!
 
-# Why else do I get for free from this?
+- This is the `Schema` typeclass that provides this functionality:
+```haskell
+class Schema (label :: Symbol) (earliest :: Nat) (target :: Nat) where
+  parseJSONVia :: JSON.Value -> JSON.Parser (target `VersionOf` label)
+```
 
-- Avoiding datatype confusion
+- So when we use it like such...
+```haskell
+parseJSONVia @"User" @1 @2
+```
 
-- Back to business. We have this data type `Info`.
+- We are passing the type-level symbol `"User"` as the first argument `label`.
 
+- Then a type-level natural number `1` as the starting version `earliest`.
+
+- And another type-level natural `2` as the target version `target`.
+
+# BUT HOLD ON
+
+That's a fair chunk of complexity you've just introduced there
+
+* Type-level symbols
+
+* Type-level natural numbers
+
+* A shameful number of language extensions
+```haskell
+{-# LANGUAGE DataKinds             #-}
+{-# LANGUAGE DeriveAnyClass        #-}
+{-# LANGUAGE DeriveGeneric         #-}
+{-# LANGUAGE MultiParamTypeClasses #-}
+{-# LANGUAGE OverloadedStrings     #-}
+{-# LANGUAGE RecordWildCards       #-}
+{-# LANGUAGE TypeApplications      #-}
+{-# LANGUAGE TypeFamilies          #-}
+```
+
+* ...what do I get for all this?
+
+# What else do I get?
+
+* Automatic uniqueness checking for free! 
+
+- Let's say that we have this data type `Info`.
 ```haskell
 data Info
   = Info 
-      { amount: Pounds
-      }
+      { amount: Pounds }
 ```  
 
 - Then, after another hard pivot, we change the units.
 ```haskell
 data NewInfo
   = NewInfo
-      { amount :: Pennies
-      }
+      { amount :: Pennies }
 ```
 
 - In our static typed ivory tower, we are fine, but our clients keep sending us
@@ -596,23 +652,128 @@ data NewInfo
 
 - How can we stop this confusion?
 
-```haskell
-describe "Uses Arbitrary to generate said tests" $ do
-      it "Checks how many matches we got on our non-matching schema" $ do
-        found <- matchAll @1 @4 @"User"
-        found `shouldBe` Right [1,2,3,4]
+# MatchAll
 
-      it "Spots our problematic matching schema" $ do
-        found <- matchAll @1 @2 @"Same"
-        found `shouldBe` Left [Duplicates 1 [2,1], Duplicates 2 [2,1]]
+* We get this typeclass defined
+```haskell
+class MatchAll (earliest :: Nat) (latest :: Nat) (label :: Symbol) where
+  matchAll :: IO (Either [MatchError] [Integer])
 ```
 
-# Multiple data sets
+* It uses `QuickCheck` and it's `Arbitrary` instances to generate random `JSON`
+  values for each datatype
 
-Ahh yes
+* Then tries to load each generated value as each version of the datatype
 
-But what if we want to have a data type be in more than one set?
+* And tells us how many version of a datatype each generated instance is able
+  to decode
 
+* If it's one each - we're going to have a good time.
+```haskell
+describe "Uses Arbitrary to generate said tests" $ do
+  it "Checks if our datatypes will get confused" $ do
+    found <- matchAll @1 @4 @"User"
+    found `shouldBe` Right [1,2,3,4]
+```
+
+* But if our `JSON` representations are non-unique, we'll know. 
+```haskell
+describe "Our Pennies and Pounds schema" $ do
+  it "Spots our problematic matching schema" $ do
+    found <- matchAll @1 @2 @"Same"
+    found `shouldBe` Left [Duplicates 1 [2,1], Duplicates 2 [2,1]]
+```
+
+* And we can fix our data types to ensure uniqueness.
+
+```haskell
+data Info
+  = Info 
+      { amountPounds :: Pounds }
+
+data NewInfo
+  = NewInfo
+      { amountPennies :: Pennies }
+```
+
+- Good job.
+
+# A big clever FromJSON instance
+
+- The `Aeson` library works by making datatypes define instances of the
+  `FromJSON` typeclass.
+
+- Packages like `Servant` allow us to automagically create web servers that use
+  these types.
+
+- Therefore, we can create a `newtype` that wraps all our API versions...
+```haskell
+newtype APIUser
+  = APIUser { getAPIUser :: WhateverTheNewestUserTypeIsTheseDays }
+```
+
+- ...and use `parseJSONVia` to create a `FromJSON` instance for that
+  datatype...
+```haskell
+instance JSON.FromJSON APIUser where
+  parseJSON a
+    = APIUser <$> parseJSONVia @"User" @1 @4 a
+```
+
+- And make a `Servant` server that can read any of our historical datatypes.
+```haskell
+type ExcellentApi =
+  "user" :> Get '[JSON] [APIUser] 
+```
+
+- Great job!
+
+# So, to sum up
+
+- I want to define my migrations outside my main code, throw those into a file
+  and forget about them forever until my next migration.
+
+- I want to be able to use simple ADTs for my types if I feel like it.
+
+- No, *seriously*. I want to be able to derive `FromJSON`, `ToJSON`, `Generic`, `Arbitrary` etc and use most of the standard library without
+  getting deep into type hell just because my library was too clever and wanted
+to put GADTs everywhere.
+
+- I don't want historical code to make my new code more complicated
+
+- (As much as possible)
+
+- I just want to survive the next goddamn pivot without losing my mind.
+
+# Have we achieved this?
+
+Who knows?
+
+- See the code at
+[https://github.com/danieljharvey/migratable](https://github.com/danieljharvey/migratable)
+
+- Shout at me at `@yevrahjleinad` on twitter.
+
+# Questions
+
+- Any questions?
+
+# Disclaimer
+
+```haskell
+{-# LANGUAGE ScopedTypeVariables #-}
+
+whyDidntYouUse :: forall a. a -> String
+whyDidntYouUse = const "Because I am a terrible programmer"
+```
+
+
+
+# BONUS CONTENT
+
+- These will get big
+
+- But our datatypes can be in more than one set.
 ```haskell
 data Dog
   = Dog { name :: String
@@ -621,9 +782,9 @@ data Dog
 
 instance Versioned "Dog" 1 where
   type 1 `VersionOf` "Dog" = Dog
-
 ```
 
+- Notice we remove `age` in this one.
 ```haskell
 data AgelessDog
   = AgelessDog
@@ -631,9 +792,9 @@ data AgelessDog
 
 instance Versioned "Dog" 2 where
   type 2 `VersionOf` "Dog" = AgelessDog
-
 ```
 
+- Oops. We needed that.
 ```haskell
 data WithAgeDog
   = WithAgeDog
@@ -646,12 +807,11 @@ instance Versioned "Dog" 3 where
   type 3 `VersionOf` "Dog" = WithAgeDog
 ```
 
-This is lossier than it needs to be though - any version `1` piece of data will
+- Any version `1` piece of data will
 convert through version 2 and lose everything on the way.
 
-So let's have two import paths!
-
-```
+- So let's have two import paths!
+```haskell
 data Dog
   = Dog { name :: String
         , age  :: Int
@@ -664,6 +824,7 @@ instance Versioned "AgeDog" 1 where
   type 1 `VersionOf` "AgeDog" = Dog
 ```
 
+- (We've ignored the middle one for now - it is the same)
 ```haskell
 data WithAgeDog
   = WithAgeDog
@@ -679,9 +840,8 @@ instance Versioned "AgeDog" 2 where
   type 2 `VersionOf` "AgeDog" = WithAgeDog
 ```
 
-Then our parsing function becomes (something like)
-
-```
+- Then our parsing function becomes (something like)
+```haskell
 parseSomeKindOfDog :: JSON -> Maybe WithAgeDog
 parseSomeKindOfDog json
   =  parseJSONVia @"AgeDog" @1 @2 json
@@ -691,82 +851,4 @@ parseSomeKindOfDog json
 - We try the lossless path
 
 - Failing that, we try the lossy path to pick up any `AgeLessDog` values.
-
-
-
-# Questions
-
-```haskell
-{-# LANGUAGE ScopedTypeVariables #-}
-
-whyDidntYouUse :: forall a. a -> String
-whyDidntYouUse = const "Because I am a terrible programmer"
-```
-
-# More of a comment really.
-
-```haskell
-{-# LANGUAGE ExplicitForAll #-}
-
-whyDidntYouUse :: forall a. a -> String
-whyDidntYouUse = const "Because I am a terrible programmer"
-```
-
-
-
-
-
-
-
-
-# Here is my solution
-
-It uses.
-
-- Stand back
-
-# Whoa
-
-- Plain
-
-- Old
-
-- Haskell
-
-- Records
-
-# POHR
-
-* We can pronounce these *poor* if you like.
-
-* Not really sure why.
-
-
-# A BRIEF INTERLUDE IN DEFENSE OF CONCRETE DATA TYPES
-
-- I want to be able to derive fromJSON, toJSON, generic, arbitrary without
-  getting deep into type hell
-
-- I don't want caring about my older types to make the code that deals with my
-  current data types harder
-
-- I don't want my code to grow in complexity at an exponential rate
-
-- I want as much of the standard library available to me as possible because I
-  am lazy as hell  
-
-# Good, but maybe too clever.
-
-```haskell
-data Horse (v :: Nat) where
-  HorseV1 :: { name :: String } -> Horse 1
-  HorseV2
-    :: { firstName :: String
-       , lastName  :: String
-       }
-    -> Horse 2
-```
-
-- Nice - but I don't GADTs leaking all over my application, sorry.
-
 

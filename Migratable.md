@@ -489,7 +489,7 @@ class Versioned (label :: Symbol) (num :: Nat) where
   type num `VersionOf` label :: Type
 ```
 
-- This `VersionOf` type here is an `associated type synonym` that works a bit
+- This `VersionOf` type here is an `associated type family` that works a bit
   like a functional dependency
 
 - It defines a function we can use to find a datatype from the `label` and the
